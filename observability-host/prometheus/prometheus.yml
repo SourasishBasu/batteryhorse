@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    monitor: 'api-observability'
+
+scrape_configs:
+  - job_name: 'flask-api'
+    scrape_interval: 10s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: ['209.38.123.115:5000'] 
+        labels:
+          service: 'demo-api'
+          env: 'production'
+
+  - job_name: 'api-host-node'
+    static_configs:
+      - targets: ['209.38.123.115:9100'] 
+        labels:
+          service: 'host-metrics'
+          env: 'production'
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['prometheus:9090']

@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Observability Demo</title>
+    <style>
+        :root {
+            --bg-dark: #121212;
+            --card-bg: #1e1e1e;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent: #bb86fc;
+            --success: #4caf50;
+            --error: #f44336;
+            --warning: #ff9800;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg-dark);
+            color: var(--text-primary);
+            margin: 0;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        h1 {
+            color: var(--accent);
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .btn-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            background-color: var(--accent);
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+            flex: 1;
+        }
+
+        .btn:hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+        }
+
+        .btn-warning {
+            background-color: var(--warning);
+        }
+
+        .result-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 15px 0;
+        }
+
+        .metric-card {
+            background-color: rgba(0, 0, 0, 0.2);
+            padding: 12px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .metric-value {
+            font-size: 20px;
+            font-weight: bold;
+            margin: 5px 0;
+        }
+
+        .success {
+            color: var(--success);
+        }
+
+        .error {
+            color: var(--error);
+        }
+
+        .neutral {
+            color: var(--text-secondary);
+        }
+
+        pre {
+            background-color: rgba(0, 0, 0, 0.3);
+            padding: 12px;
+            border-radius: 6px;
+            overflow-x: auto;
+            font-size: 13px;
+            margin: 10px 0;
+        }
+
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 3px solid var(--accent);
+            width: 20px;
+            height: 20px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% {
+                transform: rotate(0deg);
+            }
+
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+
+        .loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            padding: 15px 0;
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .error-message {
+            color: var(--error);
+            padding: 10px;
+            margin-top: 10px;
+            background-color: rgba(244, 67, 54, 0.1);
+            border-radius: 4px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Observability Demo - API Performance Simulator</h1>
+
+        <div class="card">
+            <div class="btn-container">
+                <button class="btn" id="simulate-btn">Simulate 10 API Requests</button>
+                <button class="btn" id="analyze-btn">Get System Analysis</button>
+                <button class="btn" id="grafana-btn">Open Grafana Dashboard</button>
+            </div>
+
+            <div id="loading" class="loading hidden">
+                <div class="spinner"></div>
+                <div>Processing...</div>
+            </div>
+
+            <div id="simulation-results" class="hidden">
+                <h2>Simulation Results</h2>
+                <div class="result-grid">
+                    <div class="metric-card">
+                        <div>Total Requests</div>
+                        <div class="metric-value neutral" id="total-requests">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div>Successful</div>
+                        <div class="metric-value success" id="success-count">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div>Errors</div>
+                        <div class="metric-value error" id="error-count">0</div>
+                    </div>
+                </div>
+
+                <div class="metric-card" style="margin-top: 10px;">
+                    <div>Average Duration</div>
+                    <div class="metric-value neutral" id="avg-duration">0.00s</div>
+                </div>
+
+                <h3 style="margin-top: 15px;">Configuration for Error Generation Rates</h3>
+                <pre id="config-display">{}</pre>
+
+                <h3>Sample Responses</h3>
+                <pre id="response-display">[]</pre>
+            </div>
+
+            <div id="analysis-results" class="hidden">
+                <h2>Error Analysis</h2>
+                <pre id="analysis-report">No analysis available</pre>
+            </div>
+
+            <!-- Error display container -->
+            <div id="error-display" class="hidden"></div>
+        </div>
+    </div>
+
+    <script>
+        // Wait for DOM to be fully loaded
+        document.addEventListener('DOMContentLoaded', function () {
+            // Constants with proper URLs
+            const API_HOST = 'http://209.38.123.115:5000';
+            const AI_ANALYZER_HOST = 'http://64.227.132.20:5000';
+            const GRAFANA_HOST = 'http://64.227.132.20:3000';
+
+            // Get all elements
+            const simulateBtn = document.getElementById('simulate-btn');
+            const analyzeBtn = document.getElementById('analyze-btn');
+            const grafanaBtn = document.getElementById('grafana-btn');
+            const loadingElement = document.getElementById('loading');
+            const simResults = document.getElementById('simulation-results');
+            const analysisResults = document.getElementById('analysis-results');
+            const errorDisplay = document.getElementById('error-display');
+
+            // Event listeners
+            simulateBtn.addEventListener('click', simulateRequests);
+            analyzeBtn.addEventListener('click', analyzeSystem);
+            grafanaBtn.addEventListener('click', openGrafana);
+
+            function showLoading(show) {
+                loadingElement.classList.toggle('hidden', !show);
+            }
+
+            async function simulateRequests() {
+                // Clear previous results
+                simResults.classList.add('hidden');
+                analysisResults.classList.add('hidden');
+                errorDisplay.classList.add('hidden');
+                errorDisplay.innerHTML = '';
+                showLoading(true);
+
+                const config = {
+                    error_rate: 0.3,
+                    slow_db_prob: 0.2,
+                    ext_api_fail_prob: 0.1,
+                    timeout_prob: 0.1
+                };
+
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+                try {
+                    const response = await fetch(`${API_HOST}/simulate-requests`, {
+                        method: 'POST',
+                        signal: controller.signal,
+                        mode: 'cors',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                            count: 10,
+                            config: config
+                        })
+                    });
+
+                    clearTimeout(timeoutId);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+
+                    document.getElementById('total-requests').textContent = data.results.length;
+                    document.getElementById('success-count').textContent = data.summary.success_count;
+                    document.getElementById('error-count').textContent = data.summary.error_count;
+                    document.getElementById('avg-duration').textContent = data.summary.avg_duration.toFixed(2) + 's';
+                    document.getElementById('config-display').textContent = JSON.stringify(data.config, null, 2);
+                    document.getElementById('response-display').textContent = JSON.stringify(data.results.slice(0, 3), null, 2);
+
+                    simResults.classList.remove('hidden');
+
+                } catch (error) {
+                    clearTimeout(timeoutId);
+                    errorDisplay.innerHTML = `
+                        <div class="error-message">
+                            ${error.name === 'AbortError'
+                            ? 'Request timed out (2 minutes) - Try fewer requests'
+                            : `Error: ${error.message}`}
+                        </div>
+                    `;
+                    errorDisplay.classList.remove('hidden');
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            async function analyzeSystem() {
+                simResults.classList.add('hidden');
+                analysisResults.classList.add('hidden');
+                errorDisplay.classList.add('hidden');
+                errorDisplay.innerHTML = '';
+                showLoading(true);
+
+                try {
+                    const response = await fetch(`${AI_ANALYZER_HOST}/analyze`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            timestamp: new Date().toISOString()
+                        })
+                    });
+
+                    const data = await response.json();
+                    document.getElementById('analysis-report').textContent =
+                        data.report || "No issues detected";
+                    analysisResults.classList.remove('hidden');
+
+                } catch (error) {
+                    errorDisplay.innerHTML = `
+                        <div class="error-message">
+                            Analysis failed: ${error.message}
+                        </div>
+                    `;
+                    errorDisplay.classList.remove('hidden');
+                } finally {
+                    showLoading(false);
+                }
+            }
+
+            function openGrafana() {
+                window.open(GRAFANA_HOST, '_blank');
+            }
+        });
+    </script>
+</body>
+
+</html>

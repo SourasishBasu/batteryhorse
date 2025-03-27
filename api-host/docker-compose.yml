@@ -1,0 +1,55 @@
+---
+services:
+  api:
+    build:
+      context: ./api
+    ports:
+      - "5000:5000"
+    environment:
+      - PROMETHEUS_ENDPOINT=64.227.132.20:9090
+      - LOKI_ENDPOINT=64.227.132.20:3100
+      - FLASK_RUN_HOST=0.0.0.0
+      - FLASK_RUN_PORT=5000
+      - LOCAL_API_URL=http://api:5000
+    volumes:
+      - ./logs:/var/log
+    restart: unless-stopped
+    healthcheck:
+      test: >
+        bash -c 'exec 3<>/dev/tcp/127.0.0.1/5000 && echo -e "GET /api/health HTTP/1.1\r\nhost: 127.0.0.1:5000\r\nConnection: close\r\n\r\n" >&3 && cat <&3 | grep "healthy"'
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  node-exporter:
+    image: prom/node-exporter
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc)($$|/)'
+
+  promtail:
+    image: grafana/promtail
+    volumes:
+      - ./promtail/config.yml:/etc/promtail/config.yml
+      - ./logs:/var/log
+    command: -config.file=/etc/promtail/config.yml
+
+  locust:
+    image: locustio/locust
+    ports:
+      - "8089:8089"
+    volumes:
+      - ./locust/locustfile.py:/locustfile.py
+    command: -f /locustfile.py --host http://api:5000
+
+networks:
+  default:
+    driver: bridge
+    name: api-net
