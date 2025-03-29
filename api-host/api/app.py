@@ -1,25 +1,42 @@
-import random
+import os
 import time
+import random
 import logging
 import requests
 from logging.handlers import RotatingFileHandler
 from flask import Flask, request, jsonify
 from werkzeug.exceptions import HTTPException
-from prometheus_client import make_wsgi_app, Counter, Histogram, Gauge
+from prometheus_client import make_wsgi_app, Counter, Histogram
 from werkzeug.middleware.dispatcher import DispatcherMiddleware
-from flask_cors import CORS, cross_origin
+from flask_cors import CORS
+
+os.environ['TZ'] = 'UTC'
+time.tzset()
 
 # Configuring structured logging
-handler = RotatingFileHandler('/var/log/flask-app.log', maxBytes=1000000, backupCount=3)
+handler = RotatingFileHandler('/var/log/flask-app.log', maxBytes=1000000, backupCount=2)
 handler.setFormatter(logging.Formatter(
     '{"time": "%(asctime)s", "level": "%(levelname)s", "request_id": "%(request_id)s", '
-    '"endpoint": "%(endpoint)s", "message": "%(message)s", "duration": %(duration_ms)d}',
+    '"endpoint": "%(endpoint)s", "message": "%(message)s", "duration": %(duration_ms)d, '
+    '"http_status": "%(http_status)s", "error_type": "%(error_type)s", "severity": "%(severity)s"}',
     defaults={
-        'request_id': 'SYSTEM',  # Special value for non-request logs
+        'request_id': 'SYSTEM',
         'endpoint': 'INTERNAL',
-        'duration_ms': 0
+        'duration_ms': 0,
+        'http_status': '000',
+        'error_type': 'none',
+        'severity': 'none'
     }
 ))
+
+class CustomError(Exception):
+    """Enhanced error class with classification"""
+    def __init__(self, error_type, message, severity, http_status):
+        self.error_type = error_type
+        self.message = message
+        self.severity = severity
+        self.http_status = http_status
+        super().__init__(message)
 
 class MetricsSafeFilter(logging.Filter):
     def filter(self, record):
@@ -36,19 +53,19 @@ LOCAL_API_URL = "http://localhost:5000"
 
 # Prometheus metrics
 REQUEST_COUNT = Counter(
-    'api_request_count',
+    'api_request_total',
     'Total API requests count',
-    ['method', 'endpoint', 'http_status']
+    ['method', 'endpoint', 'http_status', 'status_class']
 )
 REQUEST_LATENCY = Histogram(
-    'api_request_latency_seconds',
-    'API request latency in seconds',
-    ['method', 'endpoint']
+    'api_request_duration_seconds',
+    'API request duration in seconds',
+    ['method', 'endpoint', 'http_status']
 )
 ERROR_COUNT = Counter(
     'api_error_count',
     'Total API errors count',
-    ['method', 'endpoint', 'error_type']
+    ['method', 'endpoint', 'error_type', 'http_status', 'severity']
 )
 DB_QUERY_LATENCY = Histogram(
     'db_query_latency_seconds',
@@ -63,17 +80,16 @@ app = Flask(__name__)
 
 CORS(app, resources={r"/*": {"origins": "*",}})
 
-# Add Prometheus WSGI middleware
 app.wsgi_app = DispatcherMiddleware(app.wsgi_app, {
     '/metrics': make_wsgi_app()
 })
 
-# Configuration for failure injection
+# default
 FAILURE_CONFIG = {
-    'error_rate': 0,          # 0-1 probability of random errors
-    'slow_db_prob': 0,        # 0-1 probability of slow DB queries
-    'ext_api_fail_prob': 0,   # 0-1 probability of external API failures
-    'timeout_prob': 0         # 0-1 probability of timeouts
+    'error_rate': 0,          
+    'slow_db_prob': 0,        
+    'ext_api_fail_prob': 0,   
+    'timeout_prob': 0        
 }
 
 @app.before_request
@@ -83,10 +99,8 @@ def before_request():
 
 @app.after_request
 def after_request(response):
-    # Calculate request duration
-    duration = (time.time() - request.start_time) * 1000  # in ms
-    
-    # Log the request
+    duration = (time.time() - request.start_time) * 1000
+    status_class = f"{response.status_code // 100}xx"    
     extra = {
         'request_id': request.request_id,
         'endpoint': request.path,
@@ -97,75 +111,44 @@ def after_request(response):
         extra=extra
     )
     
-    # Record metrics
+    # Recording metrics
     REQUEST_COUNT.labels(
-        request.method, request.path, response.status_code
+        request.method, request.path, response.status_code, status_class
     ).inc()
     REQUEST_LATENCY.labels(
-        request.method, request.path
+        request.method, request.path, response.status_code
     ).observe(time.time() - request.start_time)
     
     return response
 
 @app.errorhandler(Exception)
 def handle_exception(e):
-    # Log exceptions
     duration = (time.time() - request.start_time) * 1000
     extra = {
         'request_id': request.request_id,
         'endpoint': request.path,
-        'duration_ms': duration
+        'duration_ms': duration,
+        'http_status': getattr(e, 'http_status', 500),
+        'error_type': getattr(e, 'error_type', e.__class__.__name__),
+        'severity': getattr(e, 'severity', 'critical')
     }
-    logger.error(
-        f"Exception: {str(e)}",
-        extra=extra
-    )
+    logger.error(f"Exception: {str(e)}", extra=extra)
     
     ERROR_COUNT.labels(
-        request.method, request.path, e.__class__.__name__
+        request.method, 
+        request.path, 
+        extra['error_type'],
+        extra['http_status'],
+        extra['severity']
     ).inc()
     
-    if isinstance(e, HTTPException):
-        response = jsonify(error=str(e.description))
-        response.status_code = e.code
-    else:
-        response = jsonify(error="Internal server error")
-        response.status_code = 500
-    
+    response = jsonify({
+        "error": str(e),
+        "type": extra['error_type'],
+        "severity": extra['severity']
+    })
+    response.status_code = extra['http_status']
     return response
-
-def simulate_db_query():
-    """Simulate a database query with potential failures"""
-
-    # Random chance of slow query
-    if random.random() < FAILURE_CONFIG['slow_db_prob']:
-        delay = random.uniform(1, 5)  # 1-5 second delay
-        time.sleep(delay)
-        DB_QUERY_LATENCY.observe(delay)
-        return {"data": "slow query result"}
-    
-    # Normal query
-    delay = random.uniform(0.01, 0.1)
-    time.sleep(delay)
-    DB_QUERY_LATENCY.observe(delay)
-    return {"data": "query result"}
-
-def simulate_external_api_call():
-    """Simulate calling an external API with potential failures"""
-
-    if random.random() < FAILURE_CONFIG['timeout_prob']:
-        time.sleep(3)  
-        raise TimeoutError("External API timeout")
-    
-    # Random chance of failure
-    if random.random() < FAILURE_CONFIG['ext_api_fail_prob']:
-        raise ConnectionError("External API unavailable")
-    
-    # Normal call
-    delay = random.uniform(0.05, 0.3)
-    time.sleep(delay)
-    EXTERNAL_API_LATENCY.observe(delay)
-    return {"status": "success"}
 
 @app.route('/api/health', methods = ['GET'])
 def health():
@@ -174,19 +157,43 @@ def health():
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
-    """Problematic endpoint with various potential failure modes"""
+    """Endpoint with classified failure modes"""
     error_rate = float(request.headers.get('X-Error-Rate', FAILURE_CONFIG['error_rate']))
     timeout_prob = float(request.headers.get('X-Timeout-Prob', FAILURE_CONFIG['timeout_prob']))
     slow_db_prob = float(request.headers.get('X-Slow-DB-Prob', FAILURE_CONFIG['slow_db_prob']))
     ext_api_fail_prob = float(request.headers.get('X-Ext-API-Fail-Prob', FAILURE_CONFIG['ext_api_fail_prob']))
 
-    # Random chance of immediate error
+    # Error simulation
     if random.random() < error_rate:
-        raise ValueError("Random error occurred")
+
+        # Mild errors (recoverable/transient)
+        error_types = [
+            # Mild errors
+            ("RateLimitExceeded", "API rate limit exceeded", "mild", 429),
+            ("ValidationError", "Invalid input parameters", "mild", 400),
+            ("DatabaseLock", "Temporary database lock", "mild", 504),
+
+            # Critical errors
+            ("DatabaseConnectionError", "Database unreachable", "critical", 503),
+            ("InternalServerError", "Critical system failure", "critical", 500),
+
+            # External errors
+            ("ForbiddenAccess", "Third-party auth failure", "external", 403)
+        ]
+
+        error_type = random.choices(
+            error_types, 
+            weights=[
+                     0.15, 0.15, 0.1,   # Mild errors
+                     0.15, 0.1,           # Critical errors
+                     0.05                # External errors
+                    ]    
+        )[0]
+        
+        raise CustomError(*error_type)
     
-    # Simulate processing
     try:
-        # DB Query with failures
+        # Delays from 'slow DB queries' (performance degradation)
         if random.random() < slow_db_prob:
             delay = random.uniform(1, 5)
             time.sleep(delay)
@@ -198,83 +205,106 @@ def get_data():
             DB_QUERY_LATENCY.observe(delay)
             db_result = {"data": "query result"}
 
-        # External API with failures
+        # External API failures (downstream issue)
         if random.random() < timeout_prob:
-            time.sleep(3)
-            raise TimeoutError("External API timeout")
+            raise CustomError(
+                "ExternalTimeout", 
+                "Downstream service timeout", 
+                "external",
+                504
+            )
+        
         if random.random() < ext_api_fail_prob:
-            raise ConnectionError("External API unavailable")
+            raise CustomError(
+                "ExternalServiceError",
+                "Payment service unavailable",
+                "external",
+                503
+            )
+
+        # Success result
+        api_result = {"data": "api result"}
+
+        return jsonify({"db_data": db_result, "api_data": api_result})
         
-        # Simulate some processing
-        time.sleep(random.uniform(0.01, 0.1))
-        
-        api_result = {"status": "success"}
-        
-        return jsonify({
-            "status": "success",
-            "db_data": db_result,
-            "api_data": api_result
-        })
     except Exception as e:
-        raise e
+        # Critical errors (system failures)
+        if isinstance(e, CustomError):
+            raise e
+        raise CustomError(
+            "SystemError",
+            f"Unexpected system failure: {str(e)}",
+            "critical",
+            500
+        ) from e
 
 @app.route('/simulate-requests', methods=['POST'])
 def simulate_requests():
-    """Simulate multiple requests with configured failures"""
-    global FAILURE_CONFIG
+    """Enhanced simulation with error classification"""
     config = request.json.get('config', {})
     count = request.json.get('count', 10)
     
-    # Run simulations
     results = []
+    error_counts = {
+        "mild": 0,
+        "critical": 0,
+        "external": 0
+    }
+    total_duration=0
+    headers = {
+        'X-Error-Rate': str(config.get('error_rate', 0.3)),
+        'X-Timeout-Prob': str(config.get('timeout_prob', 0.1)),
+        'X-Slow-DB-Prob': str(config.get('slow_db_prob', 0.2)),
+        'X-Ext-API-Fail-Prob': str(config.get('ext_api_fail_prob', 0.1))
+    }
     for _ in range(count):
         start_time = time.time()
         try:
-            
-            response = requests.get(
-                f"{LOCAL_API_URL}/api/data",
-                headers={
-                    'X-Error-Rate': str(config.get('error_rate', 0)),
-                    'X-Timeout-Prob': str(config.get('timeout_prob', 0)),
-                    'X-Slow-DB-Prob': str(config.get('slow_db_prob', 0)),
-                    'X-Ext-API-Fail-Prob': str(config.get('ext_api_fail_prob', 0))
-                },
-                timeout=3
-            )
-            results.append({
-                "status": "success",
-                "code": response.status_code,
-                "duration": time.time() - start_time,
-                "data": response.json()
-            })
-        except requests.exceptions.Timeout:
-            results.append({
-                "status": "error",
-                "code": 504,
-                "duration": time.time() - start_time,
-                "error": "Request timeout"
-            })
-        except requests.exceptions.ConnectionError:
-            results.append({
-                "status": "error",
-                "code": 503,
-                "duration": time.time() - start_time,
-                "error": "Connection failed"
-            })
-        except Exception as e:
-            results.append({
+            response = requests.get(f"{LOCAL_API_URL}/api/data", 
+                                 headers=headers, timeout=3)
+            duration = time.time() - start_time
+            total_duration += duration
+
+            if response.status_code >= 400:
+                error_data = {
+                    "status": "error",
+                    "code": response.status_code,
+                    "error": response.json().get('error', 'Unknown error'),
+                    "type": response.json().get('type', 'unknown'),
+                    "severity": response.json().get('severity', 'critical'),
+                    "duration": duration
+                }
+                results.append(error_data)
+                error_counts[error_data["severity"]] += 1
+            else:
+                results.append({
+                    "status": "success",
+                    "code": response.status_code,
+                    "data": response.json(),
+                    "duration": duration
+                })
+        except requests.exceptions.RequestException as e:
+            duration = time.time() - start_time
+            total_duration += duration
+            error_data = {
                 "status": "error",
                 "code": 500,
-                "duration": time.time() - start_time,
-                "error": str(e)
-            })
+                "error": str(e),
+                "type": "RequestException",
+                "severity": "critical",
+                "duration": duration
+            }
+            results.append(error_data)
+            error_counts["critical"] += 1
+
     return jsonify({
         "config": config,
         "results": results,
         "summary": {
-            "success_count": sum(1 for r in results if r['status'] == 'success'),
-            "error_count": sum(1 for r in results if r['status'] == 'error'),
-            "avg_duration": sum(r['duration'] for r in results) / count
+            "total_requests": count,
+            "success_count": len([r for r in results if r['status'] == 'success']),
+            **error_counts,
+            "avg_duration": total_duration / count if count > 0 else 0,
         }
     })
 
@@ -287,6 +317,7 @@ def configure_failures():
         if key in config:
             FAILURE_CONFIG[key] = config[key]
     return jsonify(FAILURE_CONFIG)
-
+        
+            
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=False)

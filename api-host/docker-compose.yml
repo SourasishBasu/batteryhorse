@@ -17,7 +17,7 @@ services:
     healthcheck:
       test: >
         bash -c 'exec 3<>/dev/tcp/127.0.0.1/5000 && echo -e "GET /api/health HTTP/1.1\r\nhost: 127.0.0.1:5000\r\nConnection: close\r\n\r\n" >&3 && cat <&3 | grep "healthy"'
-      interval: 30s
+      interval: 60s
       timeout: 5s
       retries: 3
 
@@ -47,7 +47,7 @@ services:
       - "8089:8089"
     volumes:
       - ./locust/locustfile.py:/locustfile.py
-    command: -f /locustfile.py --host http://api:5000
+    command: -f /locustfile.py --host http://api:5000 --headless -u 1 -r 1 -t 0
 
 networks:
   default:

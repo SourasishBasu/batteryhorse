@@ -27,11 +27,17 @@ scrape_configs:
             request_id: request_id
             endpoint: endpoint
             duration_ms: duration
+            http_status: http_status
+            error_type: error_type
+            severity: severity
 
-      - labels: 
+      - labels:
           level: ""
           endpoint: ""
-          request_id: ""
+          severity: ""
+          error_type: ""
+          http_status: ""
+          duration_ms: ""
 
       - timestamp:
           source: time

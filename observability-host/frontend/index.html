@@ -104,6 +104,10 @@
             color: var(--text-secondary);
         }
 
+        .warning {
+            color: var(--warning);
+        }
+
         pre {
             background-color: rgba(0, 0, 0, 0.3);
             padding: 12px;
@@ -162,7 +166,7 @@
         <div class="card">
             <div class="btn-container">
                 <button class="btn" id="simulate-btn">Simulate 10 API Requests</button>
-                <button class="btn" id="analyze-btn">Get System Analysis</button>
+                <button class="btn" id="analyze-btn">Analyze latest metrics</button>
                 <button class="btn" id="grafana-btn">Open Grafana Dashboard</button>
             </div>
 
@@ -185,6 +189,20 @@
                     <div class="metric-card">
                         <div>Errors</div>
                         <div class="metric-value error" id="error-count">0</div>
+                    </div>
+                </div>
+                <div class="result-grid" style="margin-top: 15px;">
+                    <div class="metric-card">
+                        <div>Mild Errors</div>
+                        <div class="metric-value warning" id="mild-count">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div>Critical Errors</div>
+                        <div class="metric-value error" id="critical-count">0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div>External Errors</div>
+                        <div class="metric-value warning" id="external-count">0</div>
                     </div>
                 </div>
 
@@ -211,12 +229,11 @@
     </div>
 
     <script>
-        // Wait for DOM to be fully loaded
         document.addEventListener('DOMContentLoaded', function () {
             // Constants with proper URLs
             const API_HOST = 'http://209.38.123.115:5000';
             const AI_ANALYZER_HOST = 'http://64.227.132.20:5000';
-            const GRAFANA_HOST = 'http://64.227.132.20:3000';
+            const GRAFANA_HOST = 'http://64.227.132.20:3000/d/beh3eeq5ven7ke/golden-signal-monitoring-dashboard';
 
             // Get all elements
             const simulateBtn = document.getElementById('simulate-btn');
@@ -227,7 +244,6 @@
             const analysisResults = document.getElementById('analysis-results');
             const errorDisplay = document.getElementById('error-display');
 
-            // Event listeners
             simulateBtn.addEventListener('click', simulateRequests);
             analyzeBtn.addEventListener('click', analyzeSystem);
             grafanaBtn.addEventListener('click', openGrafana);
@@ -237,7 +253,6 @@
             }
 
             async function simulateRequests() {
-                // Clear previous results
                 simResults.classList.add('hidden');
                 analysisResults.classList.add('hidden');
                 errorDisplay.classList.add('hidden');
@@ -246,9 +261,9 @@
 
                 const config = {
                     error_rate: 0.3,
-                    slow_db_prob: 0.2,
-                    ext_api_fail_prob: 0.1,
-                    timeout_prob: 0.1
+                    slow_db_prob: 0.4,
+                    ext_api_fail_prob: 0.2,
+                    timeout_prob: 0.2
                 };
 
                 const controller = new AbortController();
@@ -278,7 +293,10 @@
 
                     document.getElementById('total-requests').textContent = data.results.length;
                     document.getElementById('success-count').textContent = data.summary.success_count;
-                    document.getElementById('error-count').textContent = data.summary.error_count;
+                    document.getElementById('error-count').textContent = data.summary.mild + data.summary.critical + data.summary.external;
+                    document.getElementById('mild-count').textContent = data.summary.mild;
+                    document.getElementById('critical-count').textContent = data.summary.critical;
+                    document.getElementById('external-count').textContent = data.summary.external;
                     document.getElementById('avg-duration').textContent = data.summary.avg_duration.toFixed(2) + 's';
                     document.getElementById('config-display').textContent = JSON.stringify(data.config, null, 2);
                     document.getElementById('response-display').textContent = JSON.stringify(data.results.slice(0, 3), null, 2);
@@ -309,18 +327,14 @@
 
                 try {
                     const response = await fetch(`${AI_ANALYZER_HOST}/analyze`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json'
-                        },
-                        body: JSON.stringify({
-                            timestamp: new Date().toISOString()
-                        })
+                        method: 'GET',
                     });
 
                     const data = await response.json();
-                    document.getElementById('analysis-report').textContent =
-                        data.report || "No issues detected";
+
+                    if (data.status !== 'success') throw new Error(message || "Analysis failed");
+
+                    renderAnalysis(data.report);
                     analysisResults.classList.remove('hidden');
 
                 } catch (error) {
@@ -333,6 +347,94 @@
                 } finally {
                     showLoading(false);
                 }
+            }
+
+            function renderAnalysis(data) {
+                const analysisContainer = document.getElementById('analysis-results');
+                analysisContainer.innerHTML = `
+                    <h2>Error Analysis</h2>
+                    
+                    <div class="result-grid">
+                        <div class="metric-card">
+                            <div>Error Rate</div>
+                            <div class="metric-value ${getSeverityClass(data.metrics.error_rate, 10)}">
+                                ${data.metrics.error_rate}%
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div>Mean Response Time</div>
+                            <div class="metric-value ${getSeverityClass(data.metrics.response_time, 300)}">
+                                ${data.metrics.response_time}ms
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div>CPU Usage</div>
+                            <div class="metric-value ${getSeverityClass(data.metrics.cpu_usage, 70)}">
+                                ${data.metrics.cpu_usage}%
+                            </div>
+                        </div>
+                        <div class="metric-card">
+                            <div>Memory Usage</div>
+                            <div class="metric-value ${getSeverityClass(data.metrics.memory_usage, 70)}">
+                                ${data.metrics.memory_usage}%
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <h3>Error Distribution</h3>
+                    <div class="result-grid">
+                        <div class="metric-card">
+                            <div>Mild Errors</div>
+                            <div class="metric-value neutral">${data.metrics.severity_rates.mild}%</div>
+                        </div>
+                        <div class="metric-card">
+                            <div>Critical Errors</div>
+                            <div class="metric-value error">${data.metrics.severity_rates.critical}%</div>
+                        </div>
+                        <div class="metric-card">
+                            <div>External Errors</div>
+                            <div class="metric-value warning">${data.metrics.severity_rates.external}%</div>
+                        </div>
+                    </div>
+                    
+                    <h3>Top Errors</h3>
+                    <table style="width:100%; margin:15px 0; border-collapse:collapse;">
+                        <thead>
+                            <tr style="background-color:rgba(0,0,0,0.3)">
+                                <th style="padding:8px;text-align:left">Error Type</th>
+                                <th style="padding:8px;text-align:left">Severity</th>
+                                <th style="padding:8px;text-align:right">Count</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${data.metrics.top_errors.map(error => `
+                                <tr style="border-bottom:1px solid #333">
+                                    <td style="padding:8px">${error.error_type}</td>
+                                    <td style="padding:8px">
+                                        <span class="${getSeverityClass(0, 0, error.severity)}">
+                                            ${error.severity}
+                                        </span>
+                                    </td>
+                                    <td style="padding:8px;text-align:right">${error.count}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                    
+                    <h3>Analysis</h3>
+                    <div style="background-color:rgba(0,0,0,0.3); padding:12px; border-radius:6px;">
+                        ${data.analysis.map(line => `<p style="margin:8px 0">${line}</p>`).join('')}
+                    </div>
+                `;
+            }
+
+            function getSeverityClass(value, threshold, severity) {
+                if (severity) {
+                    return severity.toLowerCase() === 'critical' ? 'error' :
+                        severity.toLowerCase() === 'external' ? 'warning' : 'neutral';
+                }
+                return value > threshold ? 'error' :
+                    value > threshold * 0.7 ? 'warning' : 'success';
             }
 
             function openGrafana() {
