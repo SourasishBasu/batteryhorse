@@ -31,6 +31,7 @@
 │   │   ├── requirements.txt
 │   │   └── uv.lock
 │   ├── docker-compose.yml
+│   ├── env.example
 │   ├── locust
 │   │   └── locustfile.py
 │   └── promtail
@@ -58,7 +59,7 @@
     └── prometheus
         └── prometheus.yml
 
-13 directories, 22 files
+13 directories, 23 files
 ```
 
 ## Setup
@@ -66,7 +67,7 @@
 1. Clone the repository. Run the web server (optional).
 
 ```bash
-git clone https://github.com/SourasishBasu/batterhorse.git
+git clone https://github.com/SourasishBasu/batteryhorse.git
 cd batteryhorse
 ```
 
@@ -96,5 +97,5 @@ cd observability-host && docker compose up -d --remove-orphans --build
 - Analyzer service API: `<host-ip>:5001`
 - Report Dashboard: `<host-ip>`
 
-
-Deployement and testing performed on 2x 2 vCPU, 4GB RAM server on DigitalOcean.
+#### Note:
+Deployment and testing performed on 2x 2 vCPU, 4GB RAM server on DigitalOcean.
