@@ -161,7 +161,7 @@
 
 <body>
     <div class="container">
-        <h1>Observability Demo - API Performance Simulator</h1>
+        <h1>Observability Demo - API Dashboard</h1>
 
         <div class="card">
             <div class="btn-container">
@@ -231,11 +231,10 @@
     <script>
         document.addEventListener('DOMContentLoaded', function () {
             // Constants with proper URLs
-            const API_HOST = 'http://209.38.123.115:5000';
-            const AI_ANALYZER_HOST = 'http://64.227.132.20:5000';
-            const GRAFANA_HOST = 'http://64.227.132.20:3000/d/beh3eeq5ven7ke/golden-signal-monitoring-dashboard';
+            const API_HOST = `${API_HOST_URL}`;
+            const AI_ANALYZER_HOST = `${ANALYZER_HOST_URL}`;
+            const GRAFANA_HOST = `${GRAFANA_URL}`;
 
-            // Get all elements
             const simulateBtn = document.getElementById('simulate-btn');
             const analyzeBtn = document.getElementById('analyze-btn');
             const grafanaBtn = document.getElementById('grafana-btn');

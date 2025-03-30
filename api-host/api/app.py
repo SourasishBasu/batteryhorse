@@ -30,7 +30,7 @@ handler.setFormatter(logging.Formatter(
 ))
 
 class CustomError(Exception):
-    """Enhanced error class with classification"""
+    """Enhanced error class with classification for error severity and types"""
     def __init__(self, error_type, message, severity, http_status):
         self.error_type = error_type
         self.message = message
@@ -99,6 +99,9 @@ def before_request():
 
 @app.after_request
 def after_request(response):
+    """
+    Updates Prometheus request related metrics data and logs after request finishes
+    """
     duration = (time.time() - request.start_time) * 1000
     status_class = f"{response.status_code // 100}xx"    
     extra = {
@@ -111,7 +114,6 @@ def after_request(response):
         extra=extra
     )
     
-    # Recording metrics
     REQUEST_COUNT.labels(
         request.method, request.path, response.status_code, status_class
     ).inc()
@@ -123,6 +125,9 @@ def after_request(response):
 
 @app.errorhandler(Exception)
 def handle_exception(e):
+    """
+    Updates Prometheus error related metrics data after exception handling
+    """
     duration = (time.time() - request.start_time) * 1000
     extra = {
         'request_id': request.request_id,
@@ -152,12 +157,15 @@ def handle_exception(e):
 
 @app.route('/api/health', methods = ['GET'])
 def health():
+    """
+    Health check route for API
+    """
     return jsonify({"status": "healthy"})
 
 
 @app.route('/api/data', methods=['GET'])
 def get_data():
-    """Endpoint with classified failure modes"""
+    """Endpoint for classified failures"""
     error_rate = float(request.headers.get('X-Error-Rate', FAILURE_CONFIG['error_rate']))
     timeout_prob = float(request.headers.get('X-Timeout-Prob', FAILURE_CONFIG['timeout_prob']))
     slow_db_prob = float(request.headers.get('X-Slow-DB-Prob', FAILURE_CONFIG['slow_db_prob']))
@@ -166,8 +174,7 @@ def get_data():
     # Error simulation
     if random.random() < error_rate:
 
-        # Mild errors (recoverable/transient)
-        error_types = [
+        error_type = random.choice([
             # Mild errors
             ("RateLimitExceeded", "API rate limit exceeded", "mild", 429),
             ("ValidationError", "Invalid input parameters", "mild", 400),
@@ -179,16 +186,7 @@ def get_data():
 
             # External errors
             ("ForbiddenAccess", "Third-party auth failure", "external", 403)
-        ]
-
-        error_type = random.choices(
-            error_types, 
-            weights=[
-                     0.15, 0.15, 0.1,   # Mild errors
-                     0.15, 0.1,           # Critical errors
-                     0.05                # External errors
-                    ]    
-        )[0]
+        ])
         
         raise CustomError(*error_type)
     
@@ -222,13 +220,11 @@ def get_data():
                 503
             )
 
-        # Success result
         api_result = {"data": "api result"}
 
         return jsonify({"db_data": db_result, "api_data": api_result})
         
     except Exception as e:
-        # Critical errors (system failures)
         if isinstance(e, CustomError):
             raise e
         raise CustomError(
@@ -240,7 +236,7 @@ def get_data():
 
 @app.route('/simulate-requests', methods=['POST'])
 def simulate_requests():
-    """Enhanced simulation with error classification"""
+    """Route to trigger simulation of API errors"""
     config = request.json.get('config', {})
     count = request.json.get('count', 10)
     

@@ -8,7 +8,7 @@ import requests
 import time
 import json
 
-genai.configure(api_key=os.getenv('GEMINI_API_KEY', 'AIzaSyBf5xDMXWPEFiKf2C44DyoDXACvevPY3DU'))
+genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
 model = genai.GenerativeModel('gemini-2.0-flash')
 
 app = Flask(__name__)
@@ -24,7 +24,7 @@ class MetricsAnalyzer:
     
     def fetch_prometheus_metrics(self, time_range_minutes: int = 20) -> Dict[str, Any]:
         """
-        Fetch metrics from Prometheus for the last 20 minutes
+        Fetches metrics from Prometheus for the last 20 minutes
         """
         end_time = time.time()
         start_time = end_time - (time_range_minutes * 60)
@@ -33,9 +33,9 @@ class MetricsAnalyzer:
         queries = {
             'error_rate': f'sum(rate(api_request_total{{endpoint="/api/data", http_status=~"[45].."}}[{time_range_minutes}m])) / sum(rate(api_request_total[{time_range_minutes}m])) * 100',
             'avg_response_time': f'histogram_quantile(0.95, sum(rate(api_request_duration_seconds_bucket{{endpoint="/api/data"}}[{time_range_minutes}m])) by (le))',
-            'mild_error_rate': f'sum(rate(api_error_count_total{{endpoint="/api/data", severity="mild"}}[{time_range_minutes}m])) / sum(rate(api_request_total{{endpoint="/api/data"}}[{time_range_minutes}m])) * 100',
-            'external_error_rate': f'sum(rate(api_error_count_total{{endpoint="/api/data", severity="external"}}[{time_range_minutes}m])) / sum(rate(api_request_total{{endpoint="/api/data"}}[{time_range_minutes}m])) * 100',
-            'critical_error_rate': f'sum(rate(api_error_count_total{{endpoint="/api/data", severity="critical"}}[{time_range_minutes}m])) / sum(rate(api_request_total{{endpoint="/api/data"}}[{time_range_minutes}m])) * 100',
+            'mild_error_rate': f'sum(rate(api_error_count_total{{endpoint="/api/data", severity="mild"}}[{time_range_minutes}m])) / sum(rate(api_error_count_total{{endpoint="/api/data"}}[{time_range_minutes}m])) * 100',
+            'external_error_rate': f'sum(rate(api_error_count_total{{endpoint="/api/data", severity="external"}}[{time_range_minutes}m])) / sum(rate(api_error_count_total{{endpoint="/api/data"}}[{time_range_minutes}m])) * 100',
+            'critical_error_rate': f'sum(rate(api_error_count_total{{endpoint="/api/data", severity="critical"}}[{time_range_minutes}m])) / sum(rate(api_error_count_total{{endpoint="/api/data"}}[{time_range_minutes}m])) * 100',
             'top_errors': 'topk(4, sum(api_error_count_total) by (error_type, severity))',
             'cpu_usage': f'100 - (avg by (instance) (rate(node_cpu_seconds_total{{mode="idle"}}[{time_range_minutes}m])) * 100)',
             'memory_usage': '(1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100'
@@ -43,8 +43,7 @@ class MetricsAnalyzer:
         
         metrics_data = {}
         for metric_name, query in queries.items():
-            response = requests.get(f'{self.PROMETHEUS_URL}/api/v1/query', 
-                                    params={'query': query})
+            response = requests.get(f'{self.PROMETHEUS_URL}/api/v1/query', params={'query': query})
             if response.status_code == 200:
                 metrics_data[metric_name] = response.json()['data']['result']
         
@@ -52,7 +51,7 @@ class MetricsAnalyzer:
     
     def process_metrics(self, metrics: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Process raw Prometheus metrics into structured format
+        Processes raw Prometheus metrics into structured format
         """
         processed = {
             'error_rate': 0,
@@ -63,29 +62,24 @@ class MetricsAnalyzer:
             'top_errors': []
         }
         
-        # Extract error rate
         if metrics.get('error_rate'):
             processed['error_rate'] = float(metrics['error_rate'][0]['value'][1])
         
-        # Extract average response time (convert to ms)
         if metrics.get('avg_response_time'):
             processed['avg_response_time'] = float(metrics['avg_response_time'][0]['value'][1])
         
-        # Extract CPU and Memory Usage
         if metrics.get('cpu_usage'):
             processed['cpu_usage'] = float(metrics['cpu_usage'][0]['value'][1])
         
         if metrics.get('memory_usage'):
             processed['memory_usage'] = float(metrics['memory_usage'][0]['value'][1])
         
-        # Process errors by severity
         if metrics.get('mild_error_rate') and metrics.get('external_error_rate') and metrics.get('critical_error_rate'):
             severity = ["mild", "critical", "external"]
             for item in severity:
                 value = metrics.get(f'{item}_error_rate', 'unknown')[0]['value'][1]
                 processed['errors_by_severity'][item.title()] = float(value)
         
-        # Process top errors
         if metrics.get('top_errors'):
             for item in metrics['top_errors']:
                 processed['top_errors'].append({
@@ -98,25 +92,7 @@ class MetricsAnalyzer:
     
     def generate_ai_analysis(self, metrics: Dict[str, Any]) -> str:
         """
-        Generate AI-powered error analysis using Gemini
-        """
-
-        pretty_metrics = f"""
-Analysis of latest API metrics
-
-=== Metrics Snapshot ===
-- API Error Rate: {metrics['error_rate']:.2f}%
-- Avg Response Time: {metrics['avg_response_time']:.2f}ms
-- CPU Usage: {metrics['cpu_usage']:.2f}%
-- Memory Usage: {metrics['memory_usage']:.2f}%
-
-=== Top Errors Overall ===
-{json.dumps(metrics['top_errors'], indent=2)}
-
-=== Error Rates by Severity over past 20 minutes ===
-- Mild Errors: {metrics['errors_by_severity']['Mild']:.2f}%
-- Critical Errors: {metrics['errors_by_severity']['Critical']:.2f}%
-- External Errors: {metrics['errors_by_severity']['External']:.2f}%
+        Generates AI-powered error analysis using Gemini
         """
 
         prompt = f"""
@@ -131,7 +107,7 @@ You are provided metrics related to an API's various performance stats along wit
 === Top Errors ===
 {json.dumps(metrics['top_errors'], indent=2)}
 
-=== Errors Rates by Severity over past 20 minutes ===
+=== Errors Distribution by Severity over past 20 minutes ===
 - Mild Errors: {metrics['errors_by_severity']['Mild']:.2f}%
 - Critical Errors: {metrics['errors_by_severity']['Critical']:.2f}%
 - External Errors: {metrics['errors_by_severity']['External']:.2f}%
@@ -141,10 +117,10 @@ Guidelines for analysis:
 - Critical errors: Require immediate attention
 - External errors: Downstream issues, likely do not relate to API itself
 - CPU and memory stats: If unusually high, factor those into the analysis as well in relation with error messages
-- The input is from a simulated API made to have a high error rate, so DO NOT mention anything about error rate.
+- The input is from a simulated API made to have a high error rate, so DO NOT MENTION HIGH ERROR RATE, only focus on error distribution.
 
 Given the top overall errors, error rates over the past 20 minute duration, provide a professional, technically precise error analysis that covers 3 sections:
-1. Key observations
+1. Key observations on metrics, error distribution and top errors
 2. Potential root causes in short without merely restating error messages
 3. High level, specific, actionable recommendations 
 
@@ -153,7 +129,24 @@ Constraints:
 - Focus on systemic patterns, not individual error instances
 - Be technically precise
 - Avoid hypothetical scenarios or speculative solutions
-- Limit response to 3-4 sentences.
+- Limit response to 2-3 sentences.
+- Strictly adhere to the output format below and give the individual points against -> under subheadings
+
+Output Format:
+Key Observations:
+---------------------
+-> Observation 1
+-> Observation 2 etc.
+
+Potential Root Causes:
+-------------------------
+-> 
+-> 
+
+Recommendations:
+----------------------
+->
+->
         """
         
         response = model.generate_content(prompt)
@@ -173,17 +166,22 @@ Constraints:
         },
         "analysis": response.text.split('\n')
     }
-        
-        #return response.text, pretty_metrics
 
 metrics_analyzer = MetricsAnalyzer()
 
 @app.route('/api/health', methods = ['GET'])
 def health():
+    """
+    Health check route for API
+    """
+
     return jsonify({"status": "healthy"})
 
 @app.route('/analyze', methods=['GET'])
 def get_metrics_analysis():
+    """
+    Returns Gemini based analysis report of prometheus metrics
+    """
     try:
         raw_metrics = metrics_analyzer.fetch_prometheus_metrics()
         
@@ -204,9 +202,11 @@ def get_metrics_analysis():
     
 @app.route('/mock-analyze', methods=['POST'])
 def get_mock_analysis():
+    """
+    Returns Mock Analysis Report
+    """
     timestamp = request.json.get('timestamp', datetime.now().isoformat())
     
-    # Mock analysis report
     report = f"""SYSTEM ANALYSIS REPORT ({timestamp})
     
 === Metrics Snapshot ===
@@ -227,7 +227,6 @@ def get_mock_analysis():
 
     return jsonify({
         "status": "success",
-        "timestamp": timestamp,
         "report": report
     })
 
