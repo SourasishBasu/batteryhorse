@@ -9,14 +9,14 @@ scrape_configs:
     scrape_interval: 10s
     metrics_path: '/metrics'
     static_configs:
-      - targets: ['209.38.123.115:5000'] 
+      - targets: ['http://api-host-url:5000'] 
         labels:
           service: 'demo-api'
           env: 'production'
 
   - job_name: 'api-host-node'
     static_configs:
-      - targets: ['209.38.123.115:9100'] 
+      - targets: ['http://api-host-url:9100'] 
         labels:
           service: 'host-metrics'
           env: 'production'
